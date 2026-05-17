@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck disable=SC1091
 source /opt/app/.env
 
 : "${POSTGRES_DB:?need POSTGRES_DB}"
