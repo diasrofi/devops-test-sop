@@ -276,11 +276,15 @@ Check containers:
 
 The services use restart: unless-stopped, so they start again after Docker starts.
 
+## Implemented bonuses
+
+- GitHub Actions CI validates Docker Compose config, nginx config and backup script syntax.
+- Shellcheck is used for the backup script.
+- nginx rate limiting is enabled for /api/.
+
 ## What I would add with more time
 
-- GitHub Actions for docker compose config, nginx config validation and shellcheck
 - fail2ban for SSH brute-force protection
-- nginx rate limiting for /api/
 - automatic backup restore test
 - monitoring with Netdata or Prometheus/node-exporter
 - Ansible playbook for fully automated deployment
