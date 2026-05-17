@@ -199,3 +199,88 @@ restart: unless-stopped is used so containers start automatically after reboot.
 depends_on with service_healthy is used so the app waits until Postgres is ready.
 
 A self-signed SSL certificate is used because the VM has no public domain for Let us Encrypt.
+
+
+## Logs
+
+Show logs for all services:
+
+    cd /opt/app
+    sudo docker compose logs
+
+Show nginx logs:
+
+    sudo docker compose logs nginx
+
+Show app logs:
+
+    sudo docker compose logs app
+
+Show postgres logs:
+
+    sudo docker compose logs postgres
+
+## Troubleshooting
+
+### /api/hello returns 502
+
+Check container status:
+
+    cd /opt/app
+    sudo docker compose ps
+
+Check app and nginx logs:
+
+    sudo docker compose logs app
+    sudo docker compose logs nginx
+
+Common reasons:
+
+- app container is not running
+- Postgres is not healthy yet
+- DATABASE_URL is wrong
+- nginx proxy_pass points to the wrong service name or port
+
+### Backup creates an empty file or fails
+
+Check that /opt/app/.env exists:
+
+    sudo cat /opt/app/.env
+
+Check Postgres container:
+
+    cd /opt/app
+    sudo docker compose ps postgres
+
+Run backup manually:
+
+    sudo /usr/local/bin/backup-db.sh
+
+The backup script uses set -euo pipefail and checks required variables, so it stops on errors instead of silently creating a broken backup.
+
+### Containers are not running after reboot
+
+Check Docker:
+
+    sudo systemctl is-enabled docker
+    sudo systemctl is-active docker
+
+Docker should be enabled:
+
+    sudo systemctl enable --now docker
+
+Check containers:
+
+    cd /opt/app
+    sudo docker compose ps
+
+The services use restart: unless-stopped, so they start again after Docker starts.
+
+## What I would add with more time
+
+- GitHub Actions for docker compose config, nginx config validation and shellcheck
+- fail2ban for SSH brute-force protection
+- nginx rate limiting for /api/
+- automatic backup restore test
+- monitoring with Netdata or Prometheus/node-exporter
+- Ansible playbook for fully automated deployment
