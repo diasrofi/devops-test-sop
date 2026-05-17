@@ -1,25 +1,34 @@
 # DevOps test stand
 
-Production-like stand for a DevOps test assignment.
+Тестовый production-like стенд для DevOps-задания.
 
-## Architecture
+Репозиторий содержит серверный стенд на одной Ubuntu-машине:
 
-The stand contains three Docker Compose services:
+- nginx как внешний reverse proxy;
+- app как backend-приложение на Go;
+- postgres как база данных;
+- HTTPS с самоподписанным сертификатом;
+- firewall;
+- SSH hardening;
+- backup-скрипт для Postgres;
+- GitHub Actions CI;
+- nginx rate limiting для /api/.
 
-- nginx
-- app
-- postgres
+## Архитектура
 
-Only these ports are published outside:
+Пользователь -> nginx -> app -> postgres
 
-- 22/tcp for SSH
-- 80/tcp for HTTP redirect
-- 443/tcp for HTTPS
+Снаружи опубликованы только порты:
 
-The app and postgres services do not publish ports to the host. They are available only inside the Docker network.
+- 22/tcp для SSH;
+- 80/tcp для HTTP redirect на HTTPS;
+- 443/tcp для HTTPS.
 
-## Project structure
+app и postgres не публикуют порты наружу. Они доступны только внутри Docker-сети backend.
 
+## Структура проекта
+
+- README.md
 - docker-compose.yml
 - .env.example
 - nginx/app.conf
@@ -29,72 +38,98 @@ The app and postgres services do not publish ports to the host. They are availab
 - app/go.sum
 - app/main.go
 - scripts/backup-db.sh
+- .github/workflows/ci.yml
 
-## Server requirements
+## Требования к серверу
 
-Tested on Ubuntu 24.04 LTS in a Multipass VM.
+Проверялось на Ubuntu 24.04 LTS в Multipass VM.
 
-Recommended VM:
+Рекомендуемые параметры VM:
 
-- 2 CPU
-- 2 GB RAM
-- 12 GB disk
+- 2 CPU;
+- 2 GB RAM;
+- 12 GB disk.
 
-## Install Docker
+Также подойдёт Ubuntu 22.04 или 24.04 на VPS.
 
-Run on a clean Ubuntu server:
+## Быстрый деплой
+
+1. Установить зависимости:
 
     sudo apt-get update
     sudo apt-get install -y ca-certificates curl git openssl ufw
+
+2. Установить Docker:
+
     curl -fsSL https://get.docker.com | sudo sh
     sudo systemctl enable --now docker
 
-## Deploy
+3. Склонировать репозиторий:
 
-Clone the repository to /opt/app:
-
+    sudo rm -rf /opt/app
     sudo mkdir -p /opt/app
     sudo chown -R "$USER:$USER" /opt/app
-    git clone <REPO_URL> /opt/app
+    git clone https://github.com/diasrofi/devops-test-sop.git /opt/app
     cd /opt/app
 
-Create the .env file:
+4. Создать .env:
 
     cp .env.example .env
-    POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d "\n")"
+    POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
     sed -i "s|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
     chmod 600 .env
 
-Create a self-signed SSL certificate:
+Файл .env не хранится в git, потому что содержит пароль базы данных.
+
+5. Создать self-signed SSL-сертификат:
 
     mkdir -p ssl
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ssl/privkey.pem -out ssl/fullchain.pem -subj "/CN=devtest.local"
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout ssl/privkey.pem \
+      -out ssl/fullchain.pem \
+      -subj "/CN=devtest.local"
     chmod 600 ssl/privkey.pem
 
-Start the stand:
+6. Запустить стенд:
 
     sudo docker compose up -d --build
     sudo docker compose ps
 
-## Check
+Ожидаемый результат:
+
+    app            Up
+    app-nginx      Up
+    app-postgres   Up ... healthy
+
+## Проверка приложения
 
 Health endpoint:
 
     curl -k https://localhost/api/health
 
+Ожидаемый ответ:
+
+    ok
+
 API endpoint:
 
     curl -k https://localhost/api/hello
 
-Expected result:
+Ожидаемый ответ:
 
-    ok
     {"message":"hello","time":"..."}
+
+Если стенд запущен в Multipass VM, проверить с основной машины можно так:
+
+    VM_IP="$(multipass info devtest-final | awk '/IPv4:/ {print $2; exit}')"
+    curl -k "https://$VM_IP/api/health"
+    curl -k "https://$VM_IP/api/hello"
 
 ## Firewall
 
-Firewall rules:
+Настройка UFW:
 
+    sudo ufw --force reset
     sudo ufw default deny incoming
     sudo ufw default allow outgoing
     sudo ufw allow 22/tcp
@@ -103,71 +138,88 @@ Firewall rules:
     sudo ufw --force enable
     sudo ufw status verbose
 
-Only 22, 80 and 443 should be open.
+Должны быть разрешены только:
+
+- 22/tcp;
+- 80/tcp;
+- 443/tcp.
 
 ## SSH hardening
 
-Config file:
+Файл конфигурации:
 
     /etc/ssh/sshd_config.d/99-devops-hardening.conf
 
-Content:
+Содержимое:
 
     PasswordAuthentication no
     PermitRootLogin no
     PubkeyAuthentication yes
 
-Check:
+Применить настройки:
+
+    sudo sshd -t
+    sudo systemctl restart ssh
+
+Проверить:
 
     sudo sshd -T | grep -E "^(passwordauthentication|permitrootlogin|pubkeyauthentication) "
 
-Expected result:
+Ожидаемый результат:
 
     permitrootlogin no
     pubkeyauthentication yes
     passwordauthentication no
 
-Important: on a real VPS, add an SSH public key before disabling password login.
+Важно: на реальном VPS перед отключением password login нужно заранее добавить SSH-ключ.
 
-## Backups
+## Backup Postgres
 
-Backup script:
+Скрипт находится здесь:
 
     scripts/backup-db.sh
 
-Install it:
+Установка на сервер:
 
     sudo cp scripts/backup-db.sh /usr/local/bin/backup-db.sh
     sudo chmod 755 /usr/local/bin/backup-db.sh
 
-Run backup manually:
+Ручной запуск:
 
     sudo /usr/local/bin/backup-db.sh
     sudo ls -lh /var/backups/app/
 
-The script runs pg_dump from the app-postgres container, compresses the dump with gzip and removes backups older than 7 days.
+Что делает скрипт:
 
-Example cron entry for daily backups at 03:00:
+- читает переменные из /opt/app/.env;
+- запускает pg_dump внутри контейнера app-postgres;
+- сжимает дамп через gzip;
+- сохраняет backup в /var/backups/app;
+- проверяет, что файл не пустой;
+- удаляет backup-файлы старше 7 дней.
+
+Пример cron для ежедневного backup в 03:00:
 
     0 3 * * * /usr/local/bin/backup-db.sh >> /var/log/backup-db.log 2>&1
 
-## Restore from backup
+## Restore из backup
 
-List backups:
+Посмотреть backup-файлы:
 
     sudo ls -lh /var/backups/app/
 
-Restore:
+Восстановить базу из конкретного файла:
 
-    gunzip -c /var/backups/app/db-YYYYMMDD-HHMMSS.sql.gz | sudo docker exec -i app-postgres psql -U app app
+    gunzip -c /var/backups/app/db-YYYYMMDD-HHMMSS.sql.gz | \
+      sudo docker exec -i app-postgres psql -U app app
 
-## Reboot check
+## Проверка после reboot
 
-Reboot the server:
+Перезагрузить сервер:
 
     sudo reboot
 
-After reboot:
+После перезагрузки проверить:
 
     cd /opt/app
     sudo docker compose ps
@@ -175,116 +227,144 @@ After reboot:
     curl -k https://localhost/api/hello
     sudo /usr/local/bin/backup-db.sh
 
-On my test VM after reboot:
+На тестовом стенде после reboot было проверено:
 
-- Docker service was enabled and active
-- app was Up
-- app-nginx was Up
-- app-postgres was Up and healthy
-- /api/health returned ok
-- /api/hello returned JSON
-- backup successfully created a second .sql.gz file
-- firewall was active
-- SSH password login was disabled
-- root SSH login was disabled
+- Docker service: enabled, active;
+- app: Up;
+- app-nginx: Up;
+- app-postgres: Up, healthy;
+- /api/health: ok;
+- /api/hello: JSON response;
+- backup успешно создаёт .sql.gz файл;
+- firewall активен;
+- SSH password login выключен;
+- root login выключен.
 
-## Why this design
+## Логи
 
-Postgres has no published host port because only the app needs database access.
-
-The app has no published host port because all external traffic must go through nginx.
-
-restart: unless-stopped is used so containers start automatically after reboot.
-
-depends_on with service_healthy is used so the app waits until Postgres is ready.
-
-A self-signed SSL certificate is used because the VM has no public domain for Let us Encrypt.
-
-
-## Logs
-
-Show logs for all services:
+Все сервисы:
 
     cd /opt/app
     sudo docker compose logs
 
-Show nginx logs:
+Только nginx:
 
     sudo docker compose logs nginx
 
-Show app logs:
+Только приложение:
 
     sudo docker compose logs app
 
-Show postgres logs:
+Только Postgres:
 
     sudo docker compose logs postgres
 
+## CI
+
+В репозитории настроен GitHub Actions workflow:
+
+    .github/workflows/ci.yml
+
+CI проверяет:
+
+- docker compose config;
+- синтаксис backup-скрипта через bash -n;
+- backup-скрипт через shellcheck;
+- nginx config через nginx -t.
+
+## Реализованные бонусы
+
+Сделаны дополнительные пункты:
+
+- GitHub Actions CI;
+- проверка docker compose config;
+- проверка nginx config через nginx -t;
+- shellcheck для backup-скрипта;
+- nginx rate limiting для /api/.
+
 ## Troubleshooting
 
-### /api/hello returns 502
+### /api/hello возвращает 502
 
-Check container status:
+Проверить контейнеры:
 
     cd /opt/app
     sudo docker compose ps
 
-Check app and nginx logs:
+Проверить логи:
 
     sudo docker compose logs app
     sudo docker compose logs nginx
 
-Common reasons:
+Частые причины:
 
-- app container is not running
-- Postgres is not healthy yet
-- DATABASE_URL is wrong
-- nginx proxy_pass points to the wrong service name or port
+- контейнер app не запущен;
+- postgres ещё не стал healthy;
+- неправильный DATABASE_URL;
+- ошибка в proxy_pass в nginx config.
 
-### Backup creates an empty file or fails
+### Backup падает или создаёт пустой файл
 
-Check that /opt/app/.env exists:
+Проверить .env:
 
     sudo cat /opt/app/.env
 
-Check Postgres container:
+Проверить контейнер Postgres:
 
     cd /opt/app
     sudo docker compose ps postgres
 
-Run backup manually:
+Запустить backup вручную:
 
     sudo /usr/local/bin/backup-db.sh
 
-The backup script uses set -euo pipefail and checks required variables, so it stops on errors instead of silently creating a broken backup.
+В скрипте используется set -euo pipefail, поэтому при ошибке он завершится сразу и не будет молча создавать невалидный backup.
 
-### Containers are not running after reboot
+### Контейнеры не поднялись после reboot
 
-Check Docker:
+Проверить Docker:
 
     sudo systemctl is-enabled docker
     sudo systemctl is-active docker
 
-Docker should be enabled:
+Если Docker выключен:
 
     sudo systemctl enable --now docker
 
-Check containers:
+Проверить контейнеры:
 
     cd /opt/app
     sudo docker compose ps
 
-The services use restart: unless-stopped, so they start again after Docker starts.
+В docker-compose.yml используется restart: unless-stopped, поэтому контейнеры должны автоматически подняться после старта Docker.
 
-## Implemented bonuses
+## Почему такие решения
 
-- GitHub Actions CI validates Docker Compose config, nginx config and backup script syntax.
-- Shellcheck is used for the backup script.
-- nginx rate limiting is enabled for /api/.
+### Почему Postgres без внешнего порта
 
-## What I would add with more time
+Postgres нужен только backend-приложению. Поэтому у postgres нет секции ports, и база недоступна снаружи.
 
-- fail2ban for SSH brute-force protection
-- automatic backup restore test
-- monitoring with Netdata or Prometheus/node-exporter
-- Ansible playbook for fully automated deployment
+### Почему app без внешнего порта
+
+Внешний трафик должен идти через nginx. Поэтому app слушает 8080 только внутри Docker-сети.
+
+### Почему restart: unless-stopped
+
+Так контейнеры автоматически поднимаются после reboot, но не запускаются насильно, если администратор остановил их вручную.
+
+### Почему depends_on с service_healthy
+
+Приложение должно стартовать после того, как Postgres реально готов принимать подключения.
+
+### Почему self-signed SSL
+
+Стенд развёрнут в локальной VM без публичного домена. Для Lets Encrypt нужен публичный домен, поэтому здесь используется самоподписанный сертификат.
+
+## Что можно добавить позже
+
+Если бы было больше времени, я бы добавил:
+
+- fail2ban для защиты SSH от brute force;
+- автоматическую проверку восстановления backup;
+- мониторинг через Netdata или Prometheus/node-exporter;
+- Ansible playbook для полностью автоматического деплоя.
